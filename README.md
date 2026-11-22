@@ -86,14 +86,18 @@ Magisk → 模块 → 停用/删除 `weatherfix` → 重启。卸载脚本会停
 
 ## 从源码构建 / Build from source
 
-仓库 `module/` 目录就是 Magisk 模块的完整源码树。打包方式：
+仓库 `module/` 目录就是 Magisk 模块的完整源码树。在仓库根目录运行：
 
 ```sh
-cd module
-zip -r ../weatherfix_v2_systemless.zip .
+python tools/repack.py
 ```
 
-注意保持脚本可执行位（`customize.sh` 里已用 `set_perm_recursive` 兜底）。补丁 APK 的制作涉及反编译 / smali 重建，参见项目历史提交讨论。
+> **重要**：不要直接用 `zip -r` 打包。Magisk 刷入包**必须**在 zip 根目录带有
+> `META-INF/com/google/android/update-binary` 和 `updater-script`，否则 Magisk 会报
+> "This zip is not a Magisk module!"。同时必须用 STORED 压缩 + 正常时间戳 + DOS 属性，
+> 老版 Magisk（21.x）才能正确识别。`tools/repack.py` 已处理这些细节。
+
+补丁 APK 的制作涉及反编译 / smali 重建，参见项目历史提交讨论。
 
 ## 已知限制 / Known limitations
 
