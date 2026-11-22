@@ -3,4 +3,4 @@ name=HTC Weather Revive
 version=v2.0-systemless
 versionCode=20
 author=HDX
-description=复活 HTC 原生天气应用：systemless hosts 劫持 + 本地天气代理（用 sojson 数据模拟 AccuWeather）。APK 补丁可选可关，适用于 HTC 机型。
+description=复活 HTC 原生天气应用：systemless hosts 劫持 + 本地天气代理（用 sojson 数据模拟 AccuWeather）。APK 补丁可选可关，适用于 HTC 机型。（XUAN2072型计算机辅助开发）
