@@ -1,0 +1,14 @@
+#!/system/bin/sh
+# 3g.mywtv.cn 劫持跳转: 把原版"上网查看"死链 302 到中国天气网城市页
+BB=/data/local/tmp/htcweather/busybox
+BASE=/data/local/tmp/htcweather
+
+ID=$(echo "$QUERY_STRING" | $BB sed -n 's/.*[?&]id=\([0-9][0-9]*\).*/\1/p')
+CID=""
+if [ -n "$ID" ]; then
+  CID=$($BB grep -m1 "^$ID|" "$BASE/cities.txt" | $BB cut -d'|' -f3)
+fi
+[ -z "$CID" ] && CID="101010100"
+
+URL="http://www.weather.com.cn/weather/$CID.shtml"
+printf 'HTTP/1.0 302 Found\r\nLocation: %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n' "$URL"

@@ -1,0 +1,6 @@
+id=weatherfix
+name=HTC Weather Revive
+version=v2.0-systemless
+versionCode=20
+author=HADES (AWXUAN2072)
+description=Revive stock HTC Weather on HTC phones. Systemless hosts + local weather proxy (AccuWeather emulation backed by sojson). APK patches are optional/toggleable.
