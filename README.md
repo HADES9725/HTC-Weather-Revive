@@ -1,6 +1,6 @@
-# HTC Weather Revive
+# HTC Weather Revive/复活吧！HTC天气！
 
-> 让 HTC 原生天气 App 在 AccuWeather 中国区停服后继续工作。
+> 让 HTC 原生天气 App 在 AccuWeather 中国区停服后继续工作！耶耶耶www~
 > Revive the stock HTC Weather app after AccuWeather China shut down — a systemless Magisk module with a local weather proxy.
 
 [![Magisk](https://img.shields.io/badge/Magisk-systemless-brightgreen)](https://github.com/topjohnwu/Magisk)
@@ -11,17 +11,17 @@
 
 ## 为什么需要它 / Why
 
-HTC Sense 自带的天气 App 依赖 AccuWeather 接口，中国区服务停止后，天气卡片、桌面小部件和自动同步全部失效。本模块把这些请求劫持到手机本地的模拟服务器，用国内可访问的天气数据源重新喂给原生 App，不需要替换成第三方天气应用。
+HTC Sense 自带的天气 App 依赖 AccuWeather 接口，中国区服务停止后，天气卡片、桌面小部件和自动同步全部失效。本模块把这些请求劫持到手机本地的模拟服务器，用国内可访问的天气数据源重新喂给原生 App，不需要替换成第三方天气应用ww~
 
 The stock HTC Weather app hard-codes AccuWeather endpoints. After the China service was retired, the app, widgets and auto-sync all broke. This module redirects those requests to a local emulator on the device and serves them from a domestic weather source — keeping the original HTC UI alive.
 
 ## 特性 / Features
 
-- **Systemless**：通过 Magisk 覆盖 `/system/etc/hosts` 与系统应用 APK，不改动 `/system` 分区本身，可随时停用恢复。
-- **本地代理**：开机自动在 `127.0.0.1:8080` 启动 AccuWeather 接口模拟（`/cc`、`/d10`、`/h12`、`/loc`、`/geo`、`/tz`、`/cgi-bin/*`），在 `:80` 兼容老 HTC 中国区天气接口。
-- **数据源**：腾讯 sojson 天气 (`t.weather.sojson.com`)，15 分钟缓存 + 过期兜底，断网时回退最近一次缓存。
-- **在线搜索可用**：修复了城市在线搜索、城市名重复（"深圳市深圳市"）等问题。
-- **跨机型开关**：不兼容的机型可关闭 APK 补丁层，只保留通用框架（hosts + 本地代理），避免系统应用崩溃。
+- **Systemless**：通过 Magisk 覆盖 `/system/etc/hosts` 与系统应用 APK，不改动 `/system` 分区本身，可随时停用恢复w
+- **本地代理**：开机自动在 `127.0.0.1:8080` 启动 AccuWeather 接口模拟（`/cc`、`/d10`、`/h12`、`/loc`、`/geo`、`/tz`、`/cgi-bin/*`），在 `:80` 兼容老 HTC 中国区天气接口w
+- **数据源**：腾讯 sojson 天气 (`t.weather.sojson.com`)，15 分钟缓存 + 过期兜底，断网时回退最近一次缓存w
+- **在线搜索可用**：修复了城市在线搜索、城市名重复（"深圳市深圳市"）等问题w
+- **跨机型开关**：不兼容的机型可关闭 APK 补丁层，只保留通用框架（hosts + 本地代理），避免系统应用崩溃ww
 
 ## 工作原理 / How it works
 
@@ -50,12 +50,12 @@ AccuWeather 风格的 JSON  ──▶  原生 App 正常解析显示
 
 ## 安装 / Installation
 
-1. 手机已 root 并装好 Magisk；先在 Magisk 里卸载旧版 `weatherfix` 并重启。
-2. Magisk → 模块 → 从本地安装 → 选择 `weatherfix_v2_systemless.zip`。
-3. 重启。开机约 1 分钟后天气 App 会自动同步一次。
-4. 打开天气 App：添加城市、在线搜索都应恢复正常。
+1. 手机已 root 并装好 Magisk；先在 Magisk 里卸载旧版 `weatherfix` 并重启w
+2. Magisk → 模块 → 从本地安装 → 选择 `weatherfix_v2_systemless.zip`w
+3. 重启。开机约 1 分钟后天气 App 会自动同步一次w
+4. 打开天气 App：添加城市、在线搜索都应恢复正常w
 
-详细安装说明见 [docs/INSTALL.md](docs/INSTALL.md)。
+详细安装说明见 [docs/INSTALL.md](docs/INSTALL.md)嗷ww~
 
 ## 跨机型 / 关闭 APK 补丁层
 
