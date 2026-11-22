@@ -22,6 +22,7 @@ SRC = os.path.join(ROOT, "module")
 OUT = os.path.join(ROOT, "releases", "weatherfix_v2_systemless.zip")
 TS = (2026, 11, 23, 0, 35, 0)
 
+# Byte-for-byte copy of the update-binary from the known-good v1 package.
 UPDATE_BINARY = b"""#!/sbin/sh
 
 #################
@@ -30,6 +31,7 @@ UPDATE_BINARY = b"""#!/sbin/sh
 
 umask 022
 
+# echo before loading util_functions
 ui_print() { echo "$1"; }
 
 require_new_magisk() {
@@ -38,6 +40,10 @@ require_new_magisk() {
   ui_print "*******************************"
   exit 1
 }
+
+#########################
+# Load util_functions.sh
+#########################
 
 OUTFD=$2
 ZIPFILE=$3
