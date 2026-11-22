@@ -107,4 +107,4 @@ python tools/repack.py
 
 ## 致谢 / Credits
 
-由 HADES (AWXUAN2072) 逆向与实现。数据源感谢 sojson 天气。
+由 HDX 逆向与实现。数据源感谢 sojson 天气。

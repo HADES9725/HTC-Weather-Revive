@@ -2,7 +2,7 @@
 
 ## HTC Weather Revive v2.0 (systemless)
 
-作者: HADES (AWXUAN2072)
+作者: HDX
 
 ---
 
