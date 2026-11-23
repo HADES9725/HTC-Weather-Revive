@@ -1,6 +1,6 @@
 # 安装说明 / Installation Guide
 
-## HTC Weather Revive v2.0 (systemless)
+## HTC Weather Revive v2.2 (systemless)
 
 作者: HDX
 
@@ -17,7 +17,7 @@
 2. **开机 `service.sh`** 自动部署本地代理到 `/data/local/tmp/htcweather` 并启动：
    - `:8080` AccuWeather 接口模拟（`/cc` `/d10` `/h12` `/loc` `/geo` `/tz` `/cgi-bin/*`）
    - `:80` 老 HTC 中国天气接口代理
-3. **数据来源**：wttr.in 天气服务（IP 直连 + 坐标查询），15 分钟缓存 + 过期兜底。
+3. **数据来源**：中国气象局官方 API（主）+ 中国天气网 sojson（备），15 分钟缓存 + 过期兜底；成都 14 个区县有独立气象站数据。
 4. **两个补丁 APK** 覆盖原始 Weather / HtcServicePack，把 HTTPS 请求改到本地。
 
 ### 适用机型
@@ -58,4 +58,4 @@ Magisk → 模块 → 停用/删除 `weatherfix` → 重启。卸载脚本会自
 ### 已知限制
 
 - GPS 自动定位卡片在某些机型上仍可能显示感叹号（定位服务与天气数据槽的关联问题，属于 App 自身逻辑，本版本未处理）。
-- 数据源依赖 `wttr.in`；若该服务不可用，代理会回退到 15 分钟内的缓存数据。
+- 数据源依赖中国气象局 `weather.cma.cn` 与中国天气网；两者不可用时回退到 15 分钟内缓存。

@@ -1,6 +1,6 @@
 id=weatherfix
 name=HTC Weather Revive
-version=v2.0-systemless
-versionCode=20
+version=v2.2-systemless
+versionCode=22
 author=HDX
-description=复活 HTC 原生天气应用：systemless hosts 劫持 + 本地天气代理（用公共天气数据经本地代理转换，支持晴/多云/雷阵雨/雨/雪/雾/有风等状况）。APK 补丁可选可关，适用于 HTC 机型。（XUAN2072型计算机辅助开发）
+description=复活 HTC 原生天气应用：systemless hosts 劫持 + 本地天气代理（中国气象局官方源为主、中国天气网备用，支持成都14个区县独立气象站数据，晴/多云/雷阵雨/雨/雪/雾/有风等状况）。APK 补丁可选可关，适用于 HTC 机型。（XUAN2072型计算机辅助开发）

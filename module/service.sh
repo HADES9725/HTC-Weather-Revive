@@ -6,13 +6,16 @@
 MODDIR=${0%/*}
 BASE=/data/local/tmp/htcweather
 SRC=$MODDIR/common
-BB=$SRC/busybox/busybox
 LOG=$BASE/boot.log
 
 # Wait for /data and network stack to settle
 sleep 12
 
 mkdir -p "$BASE/b2" "$BASE/wwwcgi/cgi-bin" "$BASE/wwwA"
+# Use the deployed busybox in $BASE (module-dir busybox may hit SELinux denials)
+cp -f "$SRC/busybox/busybox" "$BASE/busybox" 2>/dev/null
+chmod 755 "$BASE/busybox"
+BB=$BASE/busybox
 {
 echo "=== htcweather boot $(date) module=$MODDIR ==="
 
@@ -24,6 +27,7 @@ cp -f "$SRC/scripts/search"           "$BASE/wwwcgi/cgi-bin/search"
 cp -f "$SRC/scripts/jump"             "$BASE/wwwcgi/cgi-bin/jump"
 cp -f "$SRC/data/accu_alias.txt"      "$BASE/accu_alias.txt"
 cp -f "$SRC/data/cities.txt"          "$BASE/cities.txt"
+cp -f "$SRC/data/cma_stations.txt"    "$BASE/cma_stations.txt"
 cp -f "$SRC/wwwA/httpd.conf"          "$BASE/wwwA/httpd.conf"
 cp -f "$SRC/busybox/busybox"          "$BASE/busybox"
 cp -f "$SRC/busybox/busybox"          "$BASE/b2/busybox"

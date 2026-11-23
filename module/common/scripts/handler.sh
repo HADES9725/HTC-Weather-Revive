@@ -1,11 +1,14 @@
 #!/system/bin/sh
-# HTC 天气本地代理 v4.2 (2026-11-23 十种天气样式全映射)
-# 数据源: wttr.in (IP 直连, 绕过 busybox DNS bug) -> 生成 HTC ChinaWeatherParser XML
-# 坐标查询: /<lat>,<lon>?format=j1  城市经纬度来自 cities.txt
+# HTC 天气本地代理 v5 (2026-11-23 中国气象局官方数据源)
+# 主源: 中国气象局 weather.cma.cn (ssl_client + IP直连绕DNS, 中文天气现象)
+# 备源: sojson 中国天气网 (IP直连, 363城市全覆盖, 同为气象局数据)
+# 生成 HTC ChinaWeatherParser 兼容 XML
 BB=/data/local/tmp/htcweather/busybox
 BASE=/data/local/tmp/htcweather
 MAP=$BASE/cities.txt
-WTTR_IP=5.9.243.187
+SMAP=$BASE/cma_stations.txt
+CMA_IP=106.120.80.204
+SJ_IP=115.231.101.162
 export TZ=CST-8
 
 # ---- 1. 获取请求参数 ----
@@ -38,72 +41,138 @@ else
   CITYNAME="北京"; CITYID="101010100"; CLON="116.407526"; CLAT="39.904030"
 fi
 
-# ---- 3. 请求 wttr.in (IP直连 + 坐标, 15分钟缓存 + 过期兜底) ----
+# ---- 3. 取 CMA 站点号 ----
+SID=$($BB grep -m1 "^$CITYID|" "$SMAP" 2>/dev/null | $BB cut -d'|' -f2 | $BB tr -d '\r')
+
+# ---- 4. 取数据: CMA 优先, sojson 兜底 (15分钟缓存+过期兜底) ----
 CACHE=$BASE/c_$CITYID.json
+SRC_TAG=""
 RAW=""
-if [ -f "$CACHE" ] && [ -n "$($BB find $CACHE -mmin -15 2>/dev/null)" ]; then
-  RAW=$(cat $CACHE)
+
+# helper: 发 HTTPS 请求到 CMA (ssl_client IP直连, 纯IP时 getaddrinfo 直接解析)
+fetch_cma(){
+  [ -z "$SID" ] && return 1
+  local req="GET /api/weather/view?stationid=$SID HTTP/1.1\r\nHost: weather.cma.cn\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
+  local out
+  out=$(printf "$req" | $BB timeout 12 $BB ssl_client "$CMA_IP" 2>/dev/null)
+  # 校验: 含 "msg":"success" 和 daily
+  echo "$out" | $BB grep -q '"msg":"success"' && echo "$out" | $BB grep -q '"daily"' || return 1
+  # 提取 JSON body: CMA 响应是 chunked, JSON 独占以 { 开头的一行
+  # (不能用贪婪 sed, 因 Set-Cookie 的 base64 里可能含花括号)
+  echo "$out" | $BB grep -m1 '^{'
+  return 0
+}
+
+# helper: sojson IP直连 (nc 带 Host头)
+fetch_sojson(){
+  local req="GET /api/weather/city/$CITYID HTTP/1.1\r\nHost: t.weather.sojson.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
+  local out
+  out=$(printf "$req" | $BB timeout 10 $BB nc "$SJ_IP" 80 2>/dev/null)
+  echo "$out" | $BB grep -q '"status":200' || return 1
+  echo "$out" | $BB grep -m1 '^{'
+  return 0
+}
+
+if [ -f "$CACHE" ] && [ -n "$($BB find "$CACHE" -mmin -15 2>/dev/null)" ]; then
+  RAW=$(cat "$CACHE")
+  SRC_TAG="cache"
 else
-  RAW=$($BB timeout 8 $BB wget -q -O - -T 8 "http://$WTTR_IP/$CLAT,$CLON?format=j1" 2>/dev/null)
+  if [ -n "$SID" ]; then
+    RAW=$(fetch_cma)
+    [ -n "$RAW" ] && SRC_TAG="cma"
+  fi
+  if [ -z "$RAW" ]; then
+    RAW=$(fetch_sojson)
+    [ -n "$RAW" ] && SRC_TAG="sojson"
+  fi
   if [ -n "$RAW" ]; then
-    printf '%s' "$RAW" > $CACHE
+    printf '%s' "$RAW" > "$CACHE"
   elif [ -f "$CACHE" ]; then
-    RAW=$(cat $CACHE)
+    RAW=$(cat "$CACHE")
+    SRC_TAG="stale"
   fi
 fi
 
-echo "$($BB date "+%H:%M:%S.%N" | cut -c1-12) code=$CODE city=$CITYNAME raw_len=$(echo -n "$RAW" | wc -c)" >> $BASE/req.log
+echo "$($BB date "+%H:%M:%S.%N" | cut -c1-12) code=$CODE city=$CITYNAME sid=${SID:-none} src=$SRC_TAG raw_len=$(echo -n "$RAW" | wc -c)" >> $BASE/req.log
 
-# ---- 4. 生成 XML ----
-if [ -n "$RAW" ] && echo "$RAW" | $BB grep -q "current_condition"; then
+# ---- 5. 生成 XML (统一 awk, 支持 CMA 中文现象 / sojson type / wttr code) ----
+if [ -n "$RAW" ]; then
   NOW=$($BB date "+%Y-%m-%d %H:%M")
-  XML=$(echo "$RAW" | $BB tr -d '\n' | $BB tr ',' '\n' | $BB awk -F':' -v city="$CITYNAME" -v cid="$CITYID" -v clon="$CLON" -v clat="$CLAT" -v now="$NOW" '
-  function trim(s){ gsub(/^[ \t]+|[ \t]+$/,"",s); gsub(/^"|"$/,"",s); return s }
+  # 判断是否 CMA 数据 (有 dayText) 或 sojson (有 "type":"晴") 或 wttr (current_condition)
+  IS_CMA=$(echo "$RAW" | $BB grep -c 'dayText')
+  IS_SJ=$(echo "$RAW" | $BB grep -c '"wendu"')
+  XML=$(echo "$RAW" | $BB tr -d '\n' | $BB tr ',' '\n' | $BB awk -F':' \
+    -v city="$CITYNAME" -v cid="$CITYID" -v clon="$CLON" -v clat="$CLAT" -v now="$NOW" \
+    -v iscma="$IS_CMA" -v issj="$IS_SJ" '
+  function trim(s,  t){ t=s; gsub(/^[ \t]+|[ \t]+$/,"",t); gsub(/^"|"$/,"",t); gsub(/\r/,"",t); return t }
   function num(s,  t){ t=trim(s); gsub(/[^0-9.-]/,"",t); if(t==""||t=="-")t="0"; return t+0 }
-  # ===== wttr.in(AccuWeather系) weatherCode -> HTC 中国天气码 v4.2 =====
-  # 三级链路(已反编译验证): XML Condition(中国码) -> g.java x[]/y[] -> Accu图标ID
-  #                          -> f.smali b[] -> 动画(晴/雷阵雨/多云/雾/炎热/间歇多云/局部晴/雨/雪/风)
-  # 中国码->动画(白天): 0晴 1/2多云 3/6/7/8/9/19/21/22雨 4/10/11/12/23/24/25雷阵雨
-  #                      13~17/26~28/34雪 18/20/29~31/35雾 32风
-  # 注意: 6->Accu图标29->雨动画(非雪); 中国码无"炎热/间歇多云/局部晴"专用码,归入晴/多云
-  function hcode(c,  n){ n=num(c)
-    if(n==113)return 0                                  # Sunny -> 晴
-    if(n==116||n==119||n==122)return 1                  # 局部晴/多云/阴 -> 多云(1)
-    if(n==143||n==146||n==148||n==149||n==152||n==153||n==154||n==155||n==156||n==248||n==260)return 18 # 雾/霾/烟 -> 雾(18) 不是雪!
-    if(n==200||n==386||n==389||n==392)return 4           # 雷阵雨 -> 雷阵雨(4)
-    if(n==176||n==263||n==266||n==293||n==296||n==350||n==353||n==356||n==359||n==365)return 7 # 各类雨 -> 小雨(7)
-    if(n==299||n==302||n==305||n==308)return 9           # 大雨/暴雨 -> 大雨(9)
-    if(n==179||n==182||n==185||n==281||n==284||n==311||n==314||n==317||n==362||n==374||n==377)return 6 # 雨夹雪/冻雨 -> 雨(6)
-    if(n==227||n==320||n==323||n==368)return 15          # 小雪 -> 小雪(15)
-    if(n==230||n==329||n==332||n==335||n==338||n==371||n==395)return 17 # 大雪/暴雪 -> 大雪(17)
-    if(n==326)return 16                                  # 中雪 -> 中雪(16)
+
+  # ===== 中文天气现象 -> HTC 中国天气码 (权威 g.java 码表) =====
+  # 0晴 1多云 2阴 3阵雨 4雷阵雨 6雨夹雪 7小雨 8中雨 9大雨 10暴雨
+  # 13小雪 15中雪 16大雪 17暴雪 18雾 32风
+  function cncode(s,  t){ t=trim(s)
+    if(t~/^晴/)return 0
+    if(t~/雷/)return 4
+    if(t~/雨夹雪|雨夹/)return 6
+    if(t~/暴雪|大雪/)return 17
+    if(t~/中雪/)return 16
+    if(t~/小雪|阵雪/)return 15
+    if(t~/雪/)return 15
+    if(t~/暴雨|大暴雨/)return 10
+    if(t~/大雨/)return 9
+    if(t~/中雨/)return 8
+    if(t~/小雨/)return 7
+    if(t~/阵雨/)return 3
+    if(t~/雨/)return 7
+    if(t~/雾|霾|烟|沙尘/)return 18
+    if(t~/风/)return 32
+    if(t~/阴/)return 2
+    if(t~/多云|少云/)return 1
     return 0 }
-  # 当前天气综合判断: 晴+大风 -> 有风(32); 否则用 hcode
-  function hcodeCur(c, wind, t,  h){ h=hcode(c)
-    if(h==0 && wind>=25)return 32                        # 晴/多云且风速>=25km/h -> 有风
-    return h }
-  # wind dir 16-point -> HTC 0-7 (N=8 in original, keep mapping)
+
   function wdir(s){
-    if(s~/^N$/)return 8; if(s~/^NNE$/)return 1; if(s~/^NE$/)return 1
-    if(s~/^ENE$/)return 2; if(s~/^E$/)return 2; if(s~/^ESE$/)return 3
-    if(s~/^SE$/)return 3; if(s~/^SSE$/)return 4; if(s~/^S$/)return 4
-    if(s~/^SSW$/)return 5; if(s~/^SW$/)return 5; if(s~/^WSW$/)return 6
-    if(s~/^W$/)return 6; if(s~/^WNW$/)return 7; if(s~/^NW$/)return 7
-    if(s~/^NNW$/)return 8
+    if(s~/北/)return 8; if(s~/东北/)return 1; if(s~/东/)return 2; if(s~/东南/)return 3
+    if(s~/南/)return 4; if(s~/西南/)return 5; if(s~/西/)return 6; if(s~/西北/)return 7
     return 8 }
-  function dmy(s,  a){ split(s,a,"-"); if(a[3]=="")return s; return a[2]"/"a[3]"/"a[1] }
-  BEGIN{ fn=0; mode=""; hhidx=0 }
+  function dmy(s,  a){ gsub(/\//,"-",s); split(s,a,"-"); if(a[3]=="")return s; return a[2]"/"a[3]"/"a[1] }
+  BEGIN{ fn=0; mode=""; di=0; curcode=""; curtext=""; curtemp=""; curhum=""; curdir=""; curwind=""; n=0 }
+
+  # ===== CMA 模式 =====
   {
     line=$0
-    # 日期触发新的一天 (在 weather 数组内)
-    if(line ~ /"date"/ && mode!="" && fn<8){ fn++; fdate[fn]=trim(substr(line,index(line,":")+1)); hhidx=0; next }
-    # 每日高低温: 不受 mode 限制, 直接按 fn 收集
+    if(iscma==1){
+      # daily 数组内每天: date/high/dayText/low 按出现顺序
+      if(line ~ /"date"/){ fn++; fdate[fn]=trim(substr(line,index(line,":")+1)); next }
+      if(line ~ /"dayText"/ && fn>0 && daytext[fn]==""){ daytext[fn]=trim(substr(line,index(line,":")+1)); next }
+      if(line ~ /"nightText"/ && fn>0 && nighttext[fn]==""){ nighttext[fn]=trim(substr(line,index(line,":")+1)); next }
+      if(line ~ /"high"/ && fn>0 && fhigh[fn]==""){ fhigh[fn]=num(substr(line,index(line,":")+1)); next }
+      if(line ~ /"low"/ && fn>0 && flow[fn]==""){ flow[fn]=num(substr(line,index(line,":")+1)); next }
+      # now 实况
+      if(line ~ /"temperature"/ && curtemp==""){ curtemp=num(substr(line,index(line,":")+1)); next }
+      if(line ~ /"humidity"/ && curhum==""){ curhum=num(substr(line,index(line,":")+1)); next }
+      if(line ~ /"windDirection"/ && curdir==""){ curdir=trim(substr(line,index(line,":")+1)); next }
+      if(line ~ /"windSpeed"/ && curwind==""){ curwind=num(substr(line,index(line,":")+1)); next }
+      next
+    }
+
+    # ===== sojson 模式 =====
+    if(issj==1){
+      if(line ~ /"wendu"/ && curtemp==""){ curtemp=num(substr(line,index(line,":")+1)); next }
+      if(line ~ /"shidu"/ && curhum==""){ curhum=num(substr(line,index(line,":")+1)); next }
+      if(line ~ /"type"/){ n++; if(n==1){ curtext=trim(substr(line,index(line,":")+1)) } if(fn>0&&daytext[fn]=="")daytext[fn]=trim(substr(line,index(line,":")+1)); next }
+      if(line ~ /"high"/){ fn++; gsub(/[^0-9.-]/,"",line); fhigh[fn]=num(line); next }
+      if(line ~ /"low"/ && fn>0){ gsub(/[^0-9.-]/,"",line); flow[fn]=num(line); next }
+      if(line ~ /"ymd"/ && fn>0 && fdate[fn]==""){ fdate[fn]=trim(substr(line,index(line,":")+1)); next }
+      if(line ~ /"fx"/ && curdir==""){ curdir=trim(substr(line,index(line,":")+1)); next }
+      next
+    }
+
+    # ===== wttr 兼容模式 (旧缓存) =====
     if(line ~ /"maxtempC"/){ if(fn>0) fhigh[fn]=num(substr(line,index(line,":")+1)); next }
     if(line ~ /"mintempC"/){ if(fn>0) flow[fn]=num(substr(line,index(line,":")+1)); next }
-    # current_condition block (first occurrence)
     if(line ~ /"current_condition"/){ mode="cur"; next }
+    if(line ~ /"date"/ && mode!="" && fn<8){ fn++; fdate[fn]=trim(substr(line,index(line,":")+1)); next }
     if(line ~ /"weather"/ && line !~ /weatherCode|weatherDesc|weatherIconUrl/){ mode="day"; next }
-    if(line ~ /"hourly"/){ mode="hour"; next }
     if(line ~ /"nearest_area"/){ mode=""; next }
     if(mode=="cur"){
       if(line ~ /"temp_C"/ && curtemp==""){ curtemp=num(substr(line,index(line,":")+1)); next }
@@ -112,38 +181,43 @@ if [ -n "$RAW" ] && echo "$RAW" | $BB grep -q "current_condition"; then
       if(line ~ /"winddir16Point"/ && curdir==""){ curdir=trim(substr(line,index(line,":")+1)); next }
       if(line ~ /"windspeedKmph"/ && curwind==""){ curwind=num(substr(line,index(line,":")+1)); next }
       next }
-    if(mode=="day"){ next }
-    if(mode=="hour"){
-      if(line ~ /"time"/){ hhidx++; htime[hhidx]=num(substr(line,index(line,":")+1)); next }
-      if(line ~ /"tempC"/){ htemp[hhidx]=num(substr(line,index(line,":")+1)); next }
-      if(line ~ /"weatherCode"/){ hcode_[hhidx]=num(substr(line,index(line,":")+1)); next }
-      next }
   }
   END{
     if(fn==0){ fn=1; fdate[1]=now; fhigh[1]=curtemp; flow[1]=curtemp }
-    if(curtemp=="")curtemp=fhigh[1]
+    if(curtemp==""||curtemp==0)curtemp=(fhigh[1]+flow[1])/2
+    if(curtemp=="")curtemp=15
+    # 当前天气码: CMA/sojson 用中文文字, wttr 用 code
+    cc=0
+    if(iscma==1||issj==1){ if(curtext!="")cc=cncode(curtext); else if(daytext[1]!="")cc=cncode(daytext[1]) }
+    else { c=num(curcode); if(c==113)cc=0; else if(c>=176&&c<=182)cc=7; else if(c>=227&&c<=230)cc=17; else cc=1 }
+    # 风速单位: CMA m/s, sojson "N级", wttr km/h -> 统一 km/h
+    wspd=curwind
+    if(iscma==1) wspd=curwind*3.6
+    else if(issj==1) wspd=curwind*5
+    if(cc==0 && wspd>=25)cc=32
+
     print "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
     print "<Root>"
     printf "<CityMeteor CityName=\"%s\">\n", city
     printf "<StationInfo StationID=\"%s\" Longitude=\"%s\" Latitude=\"%s\"/>\n", cid, clon, clat
     printf "<SK ReportTime=\"%s:00\">\n", now
     printf "<Info Condition=\"%d\" Temperature=\"%.1f\" WindDir=\"%d\" WindPower=\"%d\" WindSpeed=\"%.1f\" Humidity=\"%d\" FeelTemperature=\"%.1f\" Sunrise=\"7:00\" Sunset=\"17:30\" Pressure=\"1010\" Visibility=\"10\"/>\n", \
-      hcodeCur(curcode,curwind,curtemp), curtemp, wdir(curdir), (curwind>30?3:(curwind>15?2:1)), curwind/3.6, curhum, curtemp
+      cc, curtemp, wdir(curdir), (wspd>30?3:(wspd>15?2:1)), wspd/3.6, curhum, curtemp
     print "</SK>"
     printf "<CF ReportTime=\"%s:00\">\n", now
-    for(i=1; i<=fn && i<=5; i++)
+    for(i=1; i<=fn && i<=5; i++){
+      wc=(daytext[i]!=""?cncode(daytext[i]):(i==1?cc:1))
       printf "<Period ForecastTime=\"%s\" Week=\"%d\" Weather=\"%d\" Tmax=\"%.1f\" Tmin=\"%.1f\" WindDir=\"8\" WindPower=\"1\"/>\n", \
-        dmy(fdate[i]), (i%7==0?7:i%7), (i==1?hcodeCur(curcode,curwind,curtemp):1), fhigh[i], flow[i]
+        dmy(fdate[i]), (i%7==0?7:i%7), wc, fhigh[i], flow[i]
+    }
     print "</CF>"
-    # ---- 每小时预报 CF3h: 用 wttr.in 真实 hourly, 每3小时取一个 ----
+    # CF3h: 用当日天气码填充 (CMA/sojson 无逐小时, 用当天白天/夜间)
     printf "<CF3h ReportTime=\"%s\">\n", now
-    if(hhidx>=8){
-      for(hh=0; hh<24; hh+=3){
-        k=int(hh/3)+1
-        if(k>hhidx)k=hhidx
-        printf "<Period Timestart=\"%s %02d:00\" Weather=\"%d\" Temperature=\"%d\"/>\n", \
-          dmy(fdate[1]), hh, hcode(hcode_[k]), htemp[k]
-      }
+    dayc=(daytext[1]!=""?cncode(daytext[1]):cc)
+    nightc=(nighttext[1]!=""?cncode(nighttext[1]):dayc)
+    for(hh=0; hh<24; hh+=3){
+      wc=(hh>=6&&hh<18?dayc:nightc)
+      printf "<Period Timestart=\"%s %02d:00\" Weather=\"%d\" Temperature=\"%d\"/>\n", dmy(fdate[1]), hh, wc, curtemp
     }
     print "</CF3h>"
     print "</CityMeteor>"
@@ -155,12 +229,8 @@ else
   XML="<?xml version=\"1.0\" encoding=\"utf-8\"?><Root><CityMeteor CityName=\"$CITYNAME\"><StationInfo StationID=\"$CITYID\" Longitude=\"$CLON\" Latitude=\"$CLAT\"/><SK ReportTime=\"$NOWB:00\"><Info Condition=\"0\" Temperature=\"15\" WindDir=\"8\" WindPower=\"1\" WindSpeed=\"0.9\" Humidity=\"50\" FeelTemperature=\"15\" Sunrise=\"7:00\" Sunset=\"17:30\" Pressure=\"1010\" Visibility=\"10\"/></SK><CF ReportTime=\"\"><Period ForecastTime=\"$FBD\" Week=\"1\" Weather=\"0\" Tmax=\"15\" Tmin=\"5\" WindDir=\"8\" WindPower=\"1\"/></CF><CF3h ReportTime=\"$NOWB\"></CF3h></CityMeteor></Root>"
 fi
 
-# ---- 5. 输出 ----
+# ---- 6. 输出 ----
 if [ -n "$QUERY_STRING" ]; then
   printf 'Content-Type: text/xml; charset=utf-8\r\n\r\n'
-  printf '%s' "$XML"
-else
-  LEN=$(echo -n "$XML" | wc -c | tr -d ' \r\n')
-  printf 'HTTP/1.0 200 OK\r\nContent-Type: text/xml; charset=utf-8\r\nContent-Length: %s\r\nConnection: close\r\n\r\n' "$LEN"
-  printf '%s' "$XML"
 fi
+printf '%s' "$XML"
