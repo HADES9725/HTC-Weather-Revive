@@ -84,14 +84,14 @@ if [ -n "$ROW" ]; then
   case "$ACCUCODE" in *'|'*) ;; *) ACCUCODE="ASI|CN|CH006|GUANGZHOU";; esac
 fi
 
-# ---- 取数据 (与 handler.sh 共用缓存) ----
-CACHE=$BASE/c_$CID.json
+# ---- 取数据 (sojson 独立缓存, 避免与 handler.sh 的 wttr 缓存 c_$CID.json 冲突) ----
+CACHE=$BASE/sj_$CID.json
 RAW=""
 if [ -f "$CACHE" ] && [ -n "$($BB find $CACHE -mmin -15 2>/dev/null)" ]; then
   RAW=$(cat $CACHE)
 else
   echo "STEP4 fetching" >> $DBG
-RAW=$($BB timeout 6 $BB wget -q -O - -T 6 "http://t.weather.sojson.com/api/weather/city/$CID" 2>/dev/null)
+RAW=$($BB timeout 6 $BB wget -q -O - -T 6 "http://115.231.101.162/api/weather/city/$CID" 2>/dev/null)
   [ -n "$RAW" ] && printf '%s' "$RAW" > $CACHE
   [ -z "$RAW" ] && [ -f "$CACHE" ] && RAW=$(cat $CACHE)
 fi
@@ -120,10 +120,10 @@ echo "$RAW" | $BB sed 's/},{/}\n{/g; s/,"/,\n"/g' | $BB awk -F':' -v ep="$P" -v 
   function wcode(t){
     t=mainpart(t)
     if(t~/雷/)return 4; if(t~/冰雹/)return 5; if(t~/雨夹雪/)return 6
-    if(t~/冻雨/)return 18; if(t~/暴雨/)return 10; if(t~/大雨/)return 9
+    if(t~/冻雨/)return 6; if(t~/暴雨/)return 10; if(t~/大雨/)return 9
     if(t~/中雨/)return 8; if(t~/阵雨/)return 3; if(t~/雨/)return 7
-    if(t~/暴雪|大雪/)return 16; if(t~/中雪/)return 15; if(t~/阵雪/)return 13
-    if(t~/雪/)return 14; if(t~/雾/)return 17; if(t~/霾|沙|尘/)return 19
+    if(t~/暴雪|大雪/)return 17; if(t~/中雪/)return 16; if(t~/阵雪/)return 15
+    if(t~/雪/)return 13; if(t~/雾/)return 18; if(t~/霾|沙|尘/)return 18
     if(t~/多云/)return 1; if(t~/阴/)return 2; if(t~/晴/)return 0
     return 0 }
   function wdir(d2){

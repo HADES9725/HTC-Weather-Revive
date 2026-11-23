@@ -19,7 +19,7 @@ The stock HTC Weather app hard-codes AccuWeather endpoints. After the China serv
 
 - **Systemless**：通过 Magisk 覆盖 `/system/etc/hosts` 与系统应用 APK，不改动 `/system` 分区本身，可随时停用恢复w
 - **本地代理**：开机自动在 `127.0.0.1:8080` 启动 AccuWeather 接口模拟（`/cc`、`/d10`、`/h12`、`/loc`、`/geo`、`/tz`、`/cgi-bin/*`），在 `:80` 兼容老 HTC 中国区天气接口w
-- **数据源**：腾讯 sojson 天气 (`t.weather.sojson.com`)，15 分钟缓存 + 过期兜底，断网时回退最近一次缓存w
+- **数据源**：wttr.in 天气服务（IP 直连 + 坐标查询），15 分钟缓存 + 过期兜底，断网时回退最近一次缓存w
 - **在线搜索可用**：修复了城市在线搜索、城市名重复（"深圳市深圳市"）等问题w
 - **跨机型开关**：不兼容的机型可关闭 APK 补丁层，只保留通用框架（hosts + 本地代理），避免系统应用崩溃ww
 
@@ -34,7 +34,7 @@ systemless hosts:  api.accuweather.com → 127.0.0.1
         ▼
 本地代理 :8080 (busybox nc + accu_server.sh)
         ▼
-sojson 天气 API  ──15min 缓存──▶  /data/local/tmp/htcweather/c_<cityid>.json
+wttr.in 天气 API  ──15min 缓存──▶  /data/local/tmp/htcweather/c_<cityid>.json
         ▼
 AccuWeather 风格的 JSON  ──▶  原生 App 正常解析显示
 ```
@@ -102,9 +102,9 @@ python tools/repack.py
 ## 已知限制 / Known limitations
 
 - GPS「当前位置」卡片在某些机型上仍可能显示感叹号（定位服务与天气数据槽的关联属于 App 自身逻辑，本版本未处理）。
-- 数据源依赖 `t.weather.sojson.com`；服务不可用时回退到 15 分钟内的缓存，超过缓存时长则无数据。
+- 数据源依赖 `wttr.in`；服务不可用时回退到 15 分钟内的缓存，超过缓存时长则无数据。
 - 补丁 APK 版权归 HTC / AccuWeather 所有，本项目仅提供个人研究与修复用途，请勿用于商业分发。
 
 ## 致谢 / Credits
 
-由 HDX 逆向与实现。数据源感谢 sojson 天气。
+由 HDX 逆向与实现。数据源感谢 wttr.in。
