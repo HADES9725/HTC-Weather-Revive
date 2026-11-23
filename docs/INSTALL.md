@@ -1,6 +1,6 @@
 # 安装说明 / Installation Guide
 
-## HTC Weather Revive v2.2 (systemless)
+## HTC Weather Revive v2.2
 
 作者: HDX
 
