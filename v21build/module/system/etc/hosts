@@ -1,0 +1,9 @@
+127.0.0.1       localhost
+::1             ip6-localhost
+
+# --- HTC Weather Revive (systemless) ---
+# AccuWeather API -> local emulator (fallback for URLs not patched in APK)
+127.0.0.1 api.accuweather.com
+# Legacy HTC China weather endpoints -> local httpd (:80)
+127.0.0.1 htc-mobile.mywtv.cn
+127.0.0.1 3g.mywtv.cn

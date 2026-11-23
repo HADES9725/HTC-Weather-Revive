@@ -39,6 +39,7 @@ if [ "$P" = "/cgi-bin/getData" ]; then
 fi
 
 if [ "$P" = "/cgi-bin/search" ]; then
+  printf 'HTTP/1.0 200 OK\r\n'
   QUERY_STRING="$QS" sh $BASE/wwwcgi/cgi-bin/search
   exit 0
 fi

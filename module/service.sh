@@ -1,65 +1,40 @@
 #!/system/bin/sh
 # HTC Weather Revive - Magisk service.sh (runs on every boot, after data is mounted)
-# Deploys local weather proxy from module dir to a writable runtime dir, then
-# starts :8080 (AccuWeather emulator) and :80 (legacy HTC endpoint httpd).
-# hosts override is handled systemlessly by Magisk (system/etc/hosts in module).
+# Starts the resident watchdog which deploys runtime files and keeps :80/:8080 alive.
+# hosts override is handled by post-fs-data.sh + watchdog (bind mount, magic mount unreliable).
 MODDIR=${0%/*}
 BASE=/data/local/tmp/htcweather
 SRC=$MODDIR/common
 LOG=$BASE/boot.log
 
-# Wait for /data and network stack to settle
-sleep 12
-
-mkdir -p "$BASE/b2" "$BASE/wwwcgi/cgi-bin" "$BASE/wwwA"
-# Use the deployed busybox in $BASE (module-dir busybox may hit SELinux denials)
-cp -f "$SRC/busybox/busybox" "$BASE/busybox" 2>/dev/null
-chmod 755 "$BASE/busybox"
-BB=$BASE/busybox
+# Wait briefly for /data and network stack to settle (keep short: watchdog self-heals)
+sleep 6
+mkdir -p "$BASE"
 {
 echo "=== htcweather boot $(date) module=$MODDIR ==="
 
-# ---- 1. Deploy runtime files (idempotent, always overwrite from module) ----
-cp -f "$SRC/scripts/accu_server.sh"   "$BASE/accu_server.sh"
-cp -f "$SRC/scripts/handler.sh"       "$BASE/handler.sh"
-cp -f "$SRC/scripts/nc_server.sh"     "$BASE/nc_server.sh"
-cp -f "$SRC/scripts/search"           "$BASE/wwwcgi/cgi-bin/search"
-cp -f "$SRC/scripts/jump"             "$BASE/wwwcgi/cgi-bin/jump"
-cp -f "$SRC/data/accu_alias.txt"      "$BASE/accu_alias.txt"
-cp -f "$SRC/data/cities.txt"          "$BASE/cities.txt"
-cp -f "$SRC/data/cma_stations.txt"    "$BASE/cma_stations.txt"
-cp -f "$SRC/wwwA/httpd.conf"          "$BASE/wwwA/httpd.conf"
-cp -f "$SRC/busybox/busybox"          "$BASE/busybox"
-cp -f "$SRC/busybox/busybox"          "$BASE/b2/busybox"
-chmod 755 "$BASE/accu_server.sh" "$BASE/handler.sh" "$BASE/nc_server.sh" \
-          "$BASE/wwwcgi/cgi-bin/search" "$BASE/wwwcgi/cgi-bin/jump" \
-          "$BASE/busybox" "$BASE/b2/busybox"
+# Bootstrap busybox so watchdog can run even if runtime dir was wiped
+cp -f "$SRC/busybox/busybox" "$BASE/busybox" 2>/dev/null
+chmod 755 "$BASE/busybox" 2>/dev/null
 
-# ---- 2. Kill any stale listeners on :80 / :8080 ----
+# Kill any stale listeners on :80 / :8080 before watchdog takes over
+BB=$BASE/busybox
 for INO in $($BB grep -h -iE ":0050 |:1F90 " /proc/net/tcp6 /proc/net/tcp 2>/dev/null | $BB awk '{print $10}'); do
   for P in /proc/[0-9]*; do
     ls -l $P/fd 2>/dev/null | $BB grep -q "socket:\[$INO\]" && kill -9 ${P##*/} 2>/dev/null
   done
 done
-sleep 1
 
-# ---- 3. Start :8080 AccuWeather emulator (detached, auto-restart loop) ----
-if ! $BB ps | $BB grep -q "[n]c -l -p 8080"; then
-  setsid /system/bin/sh "$BASE/nc_server.sh" < /dev/null > /dev/null 2>&1 &
-  echo "started nc_server :8080"
+# Start (or restart) the resident watchdog, detached from adb session.
+# Guard with a ps check to avoid duplicate loops if service.sh runs twice.
+if ! $BB ps 2>/dev/null | $BB grep -q "[w]atchdog.sh"; then
+  setsid /system/bin/sh "$SRC/scripts/watchdog.sh" </dev/null >/dev/null 2>&1 &
+  echo "started watchdog"
+else
+  echo "watchdog already running"
 fi
 
-# ---- 4. Start :80 legacy HTC endpoint proxy ----
-if ! $BB ps | $BB grep -q "[h]ttpd -p 80"; then
-  setsid $BB httpd -p 80 -h "$BASE/wwwA" -c "$BASE/wwwA/httpd.conf" < /dev/null > /dev/null 2>&1 &
-  echo "started httpd :80"
-fi
-
-sleep 2
-$BB netstat -tln 2>/dev/null | $BB grep -E ":(80|8080)" || echo "WARN: no listener found"
-
-# ---- 5. Trigger one weather autosync ----
-sleep 45
-am broadcast -a com.htc.sync.provider.weather.START_AUTOSYNC_SERVICE >/dev/null 2>&1
+sleep 4
+$BB netstat -tln 2>/dev/null | $BB grep -E ":(80|8080) " || echo "WARN: no listener yet (watchdog will fix)"
 echo "=== boot done $(date) ==="
 } >> "$LOG" 2>&1

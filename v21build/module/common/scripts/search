@@ -1,0 +1,30 @@
+#!/system/bin/sh
+# 模拟 AccuWeather locations/v1/search 接口
+# UI app (AccuWeatherOnlineSearchHelper) 期望 JSON 数组:
+#   Key / LocalizedName / EnglishName / AdministrativeArea / Country / GeoPosition / TimeZone
+# Key 使用 *HTC码 格式, 让选中后 app 自动走中国天气同步链路
+BB=/data/local/tmp/htcweather/busybox
+BASE=/data/local/tmp/htcweather
+
+Q=$(echo "$QUERY_STRING" | $BB sed 's/&apikey.*//; s/&language.*//; s/^.*[?&]q=//; s/^q=//')
+Q=$(echo "$Q" | $BB sed 's/+/ /g')
+QD=$($BB httpd -d "$Q" 2>/dev/null)
+
+OUT="["
+N=0
+if [ -n "$QD" ]; then
+  ROWS=$($BB grep -F "$QD" "$BASE/cities.txt" 2>/dev/null | $BB awk -F'|' '$2!="" && !seen[$2]++' | $BB head -15)
+  for R in $ROWS; do
+    CODE=$(echo "$R" | $BB cut -d'|' -f1)
+    NAME=$(echo "$R" | $BB cut -d'|' -f2)
+    LON=$(echo "$R" | $BB cut -d'|' -f4)
+    LAT=$(echo "$R" | $BB cut -d'|' -f5)
+    [ -n "$N" ] && [ "$N" != "0" ] && OUT="$OUT,"
+    OUT="$OUT{\"Key\":\"*$CODE\",\"LocalizedName\":\"$NAME\",\"EnglishName\":\"$NAME\",\"AdministrativeArea\":{\"LocalizedName\":\"\",\"EnglishName\":\"\"},\"Country\":{\"LocalizedName\":\"中国\",\"EnglishName\":\"China\"},\"GeoPosition\":{\"Latitude\":$LAT,\"Longitude\":$LON},\"TimeZone\":{\"Name\":\"Asia/Shanghai\"}}"
+    N=$((N+1))
+  done
+fi
+OUT="$OUT]"
+
+printf 'Content-Type: application/json; charset=utf-8\r\n\r\n'
+printf '%s' "$OUT"
