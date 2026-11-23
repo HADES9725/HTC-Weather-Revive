@@ -9,7 +9,9 @@ PDIR=/data/adb/weatherfix_data
 mkdir -p "$PDIR" 2>/dev/null
 MAP=$BASE/cities.txt
 SMAP=$BASE/cma_stations.txt
+NMAP=$BASE/nmc_stations.txt
 CMA_IP=106.120.80.204
+NMC_IP=106.120.82.180
 SJ_IP=115.231.101.162
 export TZ=CST-8
 
@@ -43,8 +45,9 @@ else
   CITYNAME="北京"; CITYID="101010100"; CLON="116.407526"; CLAT="39.904030"
 fi
 
-# ---- 3. 取 CMA 站点号 ----
+# ---- 3. 取站点号: CMA数字站号 + NMC字母站码 ----
 SID=$($BB grep -m1 "^$CITYID|" "$SMAP" 2>/dev/null | $BB cut -d'|' -f2 | $BB tr -d '\r')
+NCODE=$($BB grep -m1 "^$CITYID|" "$NMAP" 2>/dev/null | $BB cut -d'|' -f2 | $BB tr -d '\r')
 
 # ---- 4. 取数据: CMA 优先, sojson 兜底 (15分钟缓存+过期兜底) ----
 # cache in persistent dir so a reboot/wipe keeps last real data as offline fallback
@@ -66,7 +69,18 @@ fetch_cma(){
   return 0
 }
 
-# helper: sojson IP直连 (nc 带 Host头)
+# helper: NMC 中央气象台 (nc 纯HTTP直连, 字母站码, 覆盖全国2500+站)
+fetch_nmc(){
+  [ -z "$NCODE" ] && return 1
+  local req="GET /rest/weather?stationid=$NCODE HTTP/1.1\r\nHost: www.nmc.cn\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
+  local out
+  out=$(printf "$req" | $BB timeout 10 $BB nc "$NMC_IP" 80 2>/dev/null)
+  echo "$out" | $BB grep -q '"msg":"success"' && echo "$out" | $BB grep -q '"predict"' || return 1
+  echo "$out" | $BB grep -m1 '^{'
+  return 0
+}
+
+# helper: sojson IP直连 (nc 带 Host头) - 已失效(403限流), 保留兜底
 fetch_sojson(){
   local req="GET /api/weather/city/$CITYID HTTP/1.1\r\nHost: t.weather.sojson.com\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
   local out
@@ -83,6 +97,11 @@ else
   if [ -n "$SID" ]; then
     RAW=$(fetch_cma)
     [ -n "$RAW" ] && SRC_TAG="cma"
+  fi
+  # NMC 中央气象台: 字母站码覆盖全国, 是未列CMA数字站号城市的主力源
+  if [ -z "$RAW" ]; then
+    RAW=$(fetch_nmc)
+    [ -n "$RAW" ] && SRC_TAG="nmc"
   fi
   if [ -z "$RAW" ]; then
     RAW=$(fetch_sojson)
@@ -104,11 +123,14 @@ if [ -n "$RAW" ]; then
   # 判断是否 CMA 数据 (有 dayText) 或 sojson (有 "type":"晴") 或 wttr (current_condition)
   IS_CMA=$(echo "$RAW" | $BB grep -c 'dayText')
   IS_SJ=$(echo "$RAW" | $BB grep -c '"wendu"')
+  IS_NMC=$(echo "$RAW" | $BB grep -c '"predict"')
   XML=$(echo "$RAW" | $BB tr -d '\n' | $BB tr ',' '\n' | $BB awk -F':' \
     -v city="$CITYNAME" -v cid="$CITYID" -v clon="$CLON" -v clat="$CLAT" -v now="$NOW" \
-    -v iscma="$IS_CMA" -v issj="$IS_SJ" '
+    -v iscma="$IS_CMA" -v issj="$IS_SJ" -v isnmc="$IS_NMC" '
   function trim(s,  t){ t=s; gsub(/^[ \t]+|[ \t]+$/,"",t); gsub(/^"|"$/,"",t); gsub(/\r/,"",t); return t }
   function num(s,  t){ t=trim(s); gsub(/[^0-9.-]/,"",t); if(t==""||t=="-")t="0"; return t+0 }
+  # NMC 行前缀嵌套(如 "day":{"weather":{"info":"晴"), 取最后一个冒号后的值
+  function lastval(s,  i,p){ p=0; for(i=1;i<=length(s);i++) if(substr(s,i,1)==":")p=i; return substr(s,p+1) }
 
   # ===== 中文天气现象 -> HTC 中国天气码 (权威 g.java 码表) =====
   # 0晴 1多云 2阴 3阵雨 4雷阵雨 6雨夹雪 7小雨 8中雨 9大雨 10暴雨
@@ -170,6 +192,38 @@ if [ -n "$RAW" ]; then
       next
     }
 
+    # ===== NMC 中央气象台模式 =====
+    # 实况: "temperature":13.4 / "humidity":31 / "direct":"西南风" / "speed":1.9(在real段)
+    # 逐日: "date":"..." 后跟 day{"info":"晴","temperature":"8"} night{...temperature":"-2"}
+    if(isnmc==1){
+      # 实况温度/湿度/风: 只在 predict 段之前取第一次 (fn==0)
+      if(fn==0 && line ~ /"temperature":/ && curtemp==""){ curtemp=num(lastval(line)); next }
+      if(fn==0 && line ~ /"humidity":/ && curhum==""){ curhum=num(lastval(line)); next }
+      if(fn==0 && line ~ /"direct":/ && curdir==""){ curdir=trim(lastval(line)); next }
+      if(fn==0 && line ~ /"speed":/ && curwind==""){ curwind=num(lastval(line)); next }
+      # 逐日: date 开启新的一天
+      if(line ~ /"date":/){ fn++; fdate[fn]=trim(lastval(line)); next }
+      # info: 第一段(day)写 daytext, 第二段(night)写 nighttext
+      if(line ~ /"info":/ && fn>0){
+        it=trim(lastval(line))
+        if(it!="" && it!="9999" && it!="-"){
+          if(daytext[fn]=="") daytext[fn]=it
+          else if(nighttext[fn]=="") nighttext[fn]=it
+        }
+        next
+      }
+      # temperature 带引号的是逐日预报 (day->high, night->low)
+      if(line ~ /"temperature":"/ && fn>0){
+        tv=num(lastval(line))
+        if(tv>0 && tv<9999){
+          if(fhigh[fn]=="") fhigh[fn]=tv
+          else if(flow[fn]=="") flow[fn]=tv
+        }
+        next
+      }
+      next
+    }
+
     # ===== wttr 兼容模式 (旧缓存) =====
     if(line ~ /"maxtempC"/){ if(fn>0) fhigh[fn]=num(substr(line,index(line,":")+1)); next }
     if(line ~ /"mintempC"/){ if(fn>0) flow[fn]=num(substr(line,index(line,":")+1)); next }
@@ -187,15 +241,24 @@ if [ -n "$RAW" ]; then
   }
   END{
     if(fn==0){ fn=1; fdate[1]=now; fhigh[1]=curtemp; flow[1]=curtemp }
+    # NMC 逐日温度常缺字段(当天day=9999占位/部分天只有单一温度), 逐天兜底
+    if(isnmc==1){
+      for(k=1;k<=fn;k++){
+        if(fhigh[k]==""||fhigh[k]==0) fhigh[k]=(flow[k]!=""&&flow[k]>0)?flow[k]:curtemp
+        if(flow[k]==""||flow[k]==0) flow[k]=(fhigh[k]!=""&&fhigh[k]>0)?fhigh[k]:curtemp
+      }
+    }
     if(curtemp==""||curtemp==0)curtemp=(fhigh[1]+flow[1])/2
     if(curtemp=="")curtemp=15
     # 当前天气码: CMA/sojson 用中文文字, wttr 用 code
     cc=0
-    if(iscma==1||issj==1){ if(curtext!="")cc=cncode(curtext); else if(daytext[1]!="")cc=cncode(daytext[1]) }
+    # NMC 第一天 day info 常为 9999(占位), 用 nighttext 兜底当前天气现象
+    if(isnmc==1 && (daytext[1]==""||daytext[1]=="9999") && nighttext[1]!="") daytext[1]=nighttext[1]
+    if(iscma==1||issj==1||isnmc==1){ if(curtext!=""&&curtext!="-")cc=cncode(curtext); else if(daytext[1]!="")cc=cncode(daytext[1]) }
     else { c=num(curcode); if(c==113)cc=0; else if(c>=176&&c<=182)cc=7; else if(c>=227&&c<=230)cc=17; else cc=1 }
-    # 风速单位: CMA m/s, sojson "N级", wttr km/h -> 统一 km/h
+    # 风速单位: CMA/NMC m/s, sojson "N级", wttr km/h -> 统一 km/h
     wspd=curwind
-    if(iscma==1) wspd=curwind*3.6
+    if(iscma==1||isnmc==1) wspd=curwind*3.6
     else if(issj==1) wspd=curwind*5
     if(cc==0 && wspd>=25)cc=32
 

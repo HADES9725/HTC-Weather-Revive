@@ -27,6 +27,7 @@ deploy() {
   cp -f "$SRC/data/accu_alias.txt" "$BASE/accu_alias.txt"
   cp -f "$SRC/data/cities.txt" "$BASE/cities.txt"
   cp -f "$SRC/data/cma_stations.txt" "$BASE/cma_stations.txt"
+  cp -f "$SRC/data/nmc_stations.txt" "$BASE/nmc_stations.txt"
   cp -f "$SRC/wwwA/httpd.conf" "$BASE/wwwA/httpd.conf"
   cp -f "$WBB" "$BASE/b2/busybox" 2>/dev/null
   chmod 755 "$BASE/accu_server.sh" "$BASE/handler.sh" "$BASE/nc_server.sh" \
@@ -64,7 +65,7 @@ start_80() {
 log "=== watchdog start pid=$$ wbb=$WBB ==="
 tick=0
 while true; do
-  if [ ! -x "$BB" ] || [ ! -f "$BASE/handler.sh" ] || [ ! -f "$BASE/cma_stations.txt" ]; then
+  if [ ! -x "$BB" ] || [ ! -f "$BASE/handler.sh" ] || [ ! -f "$BASE/cma_stations.txt" ] || [ ! -f "$BASE/nmc_stations.txt" ]; then
     deploy
   fi
   start_8080

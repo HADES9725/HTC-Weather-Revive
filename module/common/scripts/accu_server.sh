@@ -87,15 +87,61 @@ if [ -n "$ROW" ]; then
   case "$ACCUCODE" in *'|'*) ;; *) ACCUCODE="ASI|CN|CH006|GUANGZHOU";; esac
 fi
 
-# ---- 取数据 (sojson 独立缓存, 避免与 handler.sh 的 wttr 缓存 c_$CID.json 冲突) ----
+# ---- 取数据: NMC 中央气象台 (sojson已失效403), 转成 sojson 兼容结构供下方解析 ----
+NMC_IP=106.120.82.180
+NCODE=$($BB grep -m1 "^$CID|" $BASE/nmc_stations.txt 2>/dev/null | $BB cut -d'|' -f2 | $BB tr -d '\r')
+nmc_to_sojson(){
+  [ -z "$NCODE" ] && return 1
+  local req="GET /rest/weather?stationid=$NCODE HTTP/1.1\r\nHost: www.nmc.cn\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
+  local out
+  out=$(printf "$req" | $BB timeout 10 $BB nc "$NMC_IP" 80 2>/dev/null)
+  echo "$out" | $BB grep -q '"msg":"success"' || return 1
+  local BODY TD TI TT TEMP HUM DIR
+  BODY=$(echo "$out" | $BB grep -m1 '^{')
+  TEMP=$(echo "$BODY" | $BB grep -o '"temperature":[0-9][0-9.]*' | $BB head -1 | $BB cut -d: -f2)
+  HUM=$(echo "$BODY" | $BB grep -o '"humidity":[0-9][0-9.]*' | $BB head -1 | $BB cut -d: -f2)
+  DIR=$(echo "$BODY" | $BB grep -o '"direct":"[^"]*"' | $BB head -1 | $BB cut -d'"' -f4)
+  [ -z "$TEMP" ] && return 1
+  TD=$BASE/.nmc_d_$$; TI=$BASE/.nmc_i_$$; TT=$BASE/.nmc_t_$$
+  echo "$BODY" | $BB grep -o '"date":"20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]"' | $BB cut -d'"' -f4 > $TD
+  echo "$BODY" | $BB grep -o '"info":"[^"]*"' | $BB cut -d'"' -f4 | $BB tail -n +2 > $TI
+  echo "$BODY" | $BB grep -o '"temperature":"[^"]*"' | $BB cut -d'"' -f4 > $TT
+  $BB awk -v temp="$TEMP" -v hum="$HUM" -v dir="$DIR" '
+    function okv(v){return v!=""&&v!="9999"&&v!="-"}
+    function nv(v,x){x=v;gsub(/[^0-9.-]/,"",x);return x+0}
+    FILENAME~/\.nmc_d_/{D[FNR]=$0;nd=FNR;next}
+    FILENAME~/\.nmc_i_/{I[FNR]=$0;next}
+    {T[FNR]=$0}
+    END{
+      printf "{\"status\":200,\"data\":{\"wendu\":%s,\"shidu\":%s,\"forecast\":[", nv(temp),nv(hum)
+      for(k=1;k<=nd;k++){
+        di=I[2*k-1]; ni=I[2*k]; dt=T[2*k-1]; nt=T[2*k]
+        hi=(okv(dt)?nv(dt):(okv(nt)?nv(nt):nv(temp)))
+        lo=(okv(nt)?nv(nt):(okv(dt)?nv(dt):nv(temp)))
+        ty=(okv(di)?di:(okv(ni)?ni:"晴"))
+        if(k==1){hi=nv(temp);lo=nv(temp)}
+        if(k>1)printf ","
+        printf "{\"date\":\"%s\",\"high\":\"高温 %s℃\",\"low\":\"低温 %s℃\",\"ymd\":\"%s\",\"fx\":\"%s\",\"fl\":\"1级\",\"type\":\"%s\"}", substr(D[k],9,2),hi,lo,D[k],dir,ty
+      }
+      printf "]}}"
+    }' $TD $TI $TT
+  $BB rm -f $TD $TI $TT 2>/dev/null
+  return 0
+}
+
 CACHE=$PDIR/sj_$CID.json
 RAW=""
 if [ -f "$CACHE" ] && [ -n "$($BB find $CACHE -mmin -15 2>/dev/null)" ]; then
   RAW=$(cat $CACHE)
 else
-  echo "STEP4 fetching" >> $DBG
-RAW=$($BB timeout 6 $BB wget -q -O - -T 6 "http://115.231.101.162/api/weather/city/$CID" 2>/dev/null)
+  echo "STEP4 fetching NMC ncode=$NCODE" >> $DBG
+  RAW=$(nmc_to_sojson)
   [ -n "$RAW" ] && printf '%s' "$RAW" > $CACHE
+  # fallback: sojson 旧IP(多已失效) + 旧缓存
+  if [ -z "$RAW" ]; then
+    RAW=$($BB timeout 6 $BB wget -q -O - -T 6 "http://115.231.101.162/api/weather/city/$CID" 2>/dev/null)
+    [ -n "$RAW" ] && printf '%s' "$RAW" > $CACHE
+  fi
   [ -z "$RAW" ] && [ -f "$CACHE" ] && RAW=$(cat $CACHE)
 fi
 
