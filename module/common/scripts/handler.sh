@@ -5,6 +5,8 @@
 # 生成 HTC ChinaWeatherParser 兼容 XML
 BB=/data/local/tmp/htcweather/busybox
 BASE=/data/local/tmp/htcweather
+PDIR=/data/adb/weatherfix_data
+mkdir -p "$PDIR" 2>/dev/null
 MAP=$BASE/cities.txt
 SMAP=$BASE/cma_stations.txt
 CMA_IP=106.120.80.204
@@ -45,7 +47,8 @@ fi
 SID=$($BB grep -m1 "^$CITYID|" "$SMAP" 2>/dev/null | $BB cut -d'|' -f2 | $BB tr -d '\r')
 
 # ---- 4. 取数据: CMA 优先, sojson 兜底 (15分钟缓存+过期兜底) ----
-CACHE=$BASE/c_$CITYID.json
+# cache in persistent dir so a reboot/wipe keeps last real data as offline fallback
+CACHE=$PDIR/c_$CITYID.json
 SRC_TAG=""
 RAW=""
 

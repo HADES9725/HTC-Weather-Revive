@@ -11,12 +11,13 @@ rm -f /data/dalvik-cache/*/system@product@priv-app@Weather@Weather.apk@classes.d
 rm -f /data/dalvik-cache/*/system@product@priv-app@HtcServicePack@HtcServicePack.apk@classes.dex* 2>/dev/null
 
 # Earliest safety net: start watchdog here too (service.sh may fail on some ROMs).
-# The ps guard prevents a duplicate loop when both stages run.
+# Use the persistent busybox in the module dir - /data/local/tmp may be empty at
+# this stage. The ps guard prevents a duplicate loop when both stages run.
 BASE=/data/local/tmp/htcweather
-mkdir -p "$BASE"
-cp -f "$MODDIR/common/busybox/busybox" "$BASE/busybox" 2>/dev/null
-chmod 755 "$BASE/busybox" 2>/dev/null
-if [ -x "$BASE/busybox" ] && ! "$BASE/busybox" ps 2>/dev/null | "$BASE/busybox" grep -q "[w]atchdog.sh"; then
+PDIR=/data/adb/weatherfix_data
+WBB=$MODDIR/common/busybox/busybox
+mkdir -p "$BASE" "$PDIR" 2>/dev/null
+if [ -x "$WBB" ] && ! "$WBB" ps 2>/dev/null | "$WBB" grep -q "[w]atchdog.sh"; then
   setsid /system/bin/sh "$MODDIR/common/scripts/watchdog.sh" </dev/null >/dev/null 2>&1 &
 fi
 exit 0

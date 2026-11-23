@@ -32,6 +32,8 @@ fi
 set_perm_recursive "$MODPATH" 0 0 0755 0644 2>/dev/null
 set_perm "$MODPATH/service.sh" 0 0 0755 2>/dev/null
 set_perm "$MODPATH/post-fs-data.sh" 0 0 0755 2>/dev/null
+set_perm "$MODPATH/common/scripts/watchdog.sh" 0 0 0755 2>/dev/null
+set_perm "$MODPATH/common/busybox/busybox" 0 0 0755 2>/dev/null
 
 # ===== 模块信息（兼容无 moduleInfo 的 Magisk） =====
 if ! type moduleInfo >/dev/null 2>&1; then

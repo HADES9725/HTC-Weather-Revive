@@ -12,6 +12,8 @@ DBG=/data/local/tmp/htcweather/accu_debug.log
 echo "=== START pid=$$ date=$(date)" >> $DBG
 BB=/data/local/tmp/htcweather/b2/busybox
 BASE=/data/local/tmp/htcweather
+PDIR=/data/adb/weatherfix_data
+mkdir -p "$PDIR" 2>/dev/null
 CR=$(printf '\r')
 export TZ=CST-8
 
@@ -86,7 +88,7 @@ if [ -n "$ROW" ]; then
 fi
 
 # ---- 取数据 (sojson 独立缓存, 避免与 handler.sh 的 wttr 缓存 c_$CID.json 冲突) ----
-CACHE=$BASE/sj_$CID.json
+CACHE=$PDIR/sj_$CID.json
 RAW=""
 if [ -f "$CACHE" ] && [ -n "$($BB find $CACHE -mmin -15 2>/dev/null)" ]; then
   RAW=$(cat $CACHE)
