@@ -73,11 +73,17 @@ fetch_cma(){
 fetch_nmc(){
   [ -z "$NCODE" ] && return 1
   local req="GET /rest/weather?stationid=$NCODE HTTP/1.1\r\nHost: www.nmc.cn\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n"
-  local out
-  out=$(printf "$req" | $BB timeout 10 $BB nc "$NMC_IP" 80 2>/dev/null)
-  echo "$out" | $BB grep -q '"msg":"success"' && echo "$out" | $BB grep -q '"predict"' || return 1
-  echo "$out" | $BB grep -m1 '^{'
-  return 0
+  local out="" attempt
+  # 老设备 nc 偶发失败(实测成功率仅40%), 重试3次显著提升稳定性
+  for attempt in 1 2 3; do
+    out=$(printf "$req" | $BB timeout 12 $BB nc "$NMC_IP" 80 2>/dev/null)
+    if echo "$out" | $BB grep -q '"msg":"success"' && echo "$out" | $BB grep -q '"predict"'; then
+      echo "$out" | $BB grep -m1 '^{'
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
 }
 
 # helper: sojson IP直连 (nc 带 Host头) - 已失效(403限流), 保留兜底
@@ -197,7 +203,7 @@ if [ -n "$RAW" ]; then
     # 逐日: "date":"..." 后跟 day{"info":"晴","temperature":"8"} night{...temperature":"-2"}
     if(isnmc==1){
       # 实况温度/湿度/风: 只在 predict 段之前取第一次 (fn==0)
-      if(fn==0 && line ~ /"temperature":/ && curtemp==""){ curtemp=num(lastval(line)); next }
+      if(fn==0 && line ~ /"temperature":/ && curtemp==""){ t0=num(lastval(line)); if(t0>-100 && t0<9999) curtemp=t0; next }
       if(fn==0 && line ~ /"humidity":/ && curhum==""){ curhum=num(lastval(line)); next }
       if(fn==0 && line ~ /"direct":/ && curdir==""){ curdir=trim(lastval(line)); next }
       if(fn==0 && line ~ /"speed":/ && curwind==""){ curwind=num(lastval(line)); next }
@@ -213,11 +219,14 @@ if [ -n "$RAW" ]; then
         next
       }
       # temperature 带引号的是逐日预报 (day->high, night->low)
+      # 注意: 低温可为负数(如"-2"), 只过滤9999占位, 不能用 tv>0
       if(line ~ /"temperature":"/ && fn>0){
-        tv=num(lastval(line))
-        if(tv>0 && tv<9999){
-          if(fhigh[fn]=="") fhigh[fn]=tv
-          else if(flow[fn]=="") flow[fn]=tv
+        traw=trim(lastval(line))
+        tv=num(traw)
+        if(traw!="" && traw!="9999" && traw!="-" && tv<9999 && tv>-100){
+          tc[fn]++   # 独立计数: 第1个=day(high), 第2个=night(low); 不用==""判断(awk数字0与空串比较有陷阱)
+          if(tc[fn]==1) fhigh[fn]=tv
+          else if(tc[fn]==2) flow[fn]=tv
         }
         next
       }
@@ -244,8 +253,9 @@ if [ -n "$RAW" ]; then
     # NMC 逐日温度常缺字段(当天day=9999占位/部分天只有单一温度), 逐天兜底
     if(isnmc==1){
       for(k=1;k<=fn;k++){
-        if(fhigh[k]==""||fhigh[k]==0) fhigh[k]=(flow[k]!=""&&flow[k]>0)?flow[k]:curtemp
-        if(flow[k]==""||flow[k]==0) flow[k]=(fhigh[k]!=""&&fhigh[k]>0)?fhigh[k]:curtemp
+        # 只在字段为空(缺失)时兜底; 0℃是合法低温, 不能用 ==0 判断覆盖
+        if(fhigh[k]=="") fhigh[k]=(flow[k]!="")?flow[k]:curtemp
+        if(flow[k]=="") flow[k]=(fhigh[k]!="")?fhigh[k]:curtemp
       }
     }
     if(curtemp==""||curtemp==0)curtemp=(fhigh[1]+flow[1])/2
